@@ -62,34 +62,59 @@ class Combine(nn.Module):
 class AttnBlockpp(nn.Module):
   """Channel-wise self-attention block. Modified from DDPM."""
 
-  def __init__(self, channels, skip_rescale=False, init_scale=0.):
+  def __init__(self, channels, skip_rescale=False, init_scale=0., cross_channels=None):
     super().__init__()
     self.GroupNorm_0 = nn.GroupNorm(num_groups=min(channels // 4, 32), num_channels=channels,
                                   eps=1e-6)
-    self.NIN_0 = NIN(channels, channels)
-    self.NIN_1 = NIN(channels, channels)
-    self.NIN_2 = NIN(channels, channels)
-    self.NIN_3 = NIN(channels, channels, init_scale=init_scale)
+    if cross_channels is not None:
+      self.NIN_0 = nn.Linear(channels, channels)
+      self.NIN_1 = nn.Linear(cross_channels, channels)
+      self.NIN_2 = nn.Linear(cross_channels, channels)
+      self.NIN_3 = nn.Linear(channels, channels)
+      self.cross_attn = True
+    else:
+      self.NIN_0 = nn.Linear(channels, channels)
+      self.NIN_1 = nn.Linear(channels, channels)
+      self.NIN_2 = nn.Linear(channels, channels)
+      self.NIN_3 = nn.Linear(channels, channels)
+      self.cross_attn = False
+      
     self.skip_rescale = skip_rescale
+    
+    def init_weights(m, init_scale=0.1):
+      init_scale = 1e-10 if init_scale == 0 else init_scale
+      if type(m) == nn.Linear:
+          torch.nn.init.xavier_uniform_(m.weight, gain=init_scale**2)
+          m.bias.data.fill_(0)
 
-  def forward(self, x):
+    init_weights(self.NIN_0, init_scale)
+    init_weights(self.NIN_1, init_scale)
+    init_weights(self.NIN_2, init_scale)
+    init_weights(self.NIN_3, init_scale=0)
+
+  def forward(self, x, cross_x=None):    
     B, C, H, W = x.shape
     h = self.GroupNorm_0(x)
+    
+    C = h.shape[1]
+    h = h.permute(0, 2, 3, 1).reshape(B, H * W, C)
+    
     q = self.NIN_0(h)
-    k = self.NIN_1(h)
-    v = self.NIN_2(h)
-
-    w = torch.einsum('bchw,bcij->bhwij', q, k) * (int(C) ** (-0.5))
-    w = torch.reshape(w, (B, H, W, H * W))
+    if cross_x is not None:
+      k = self.NIN_1(cross_x)
+      v = self.NIN_2(cross_x)
+    else:
+      k = self.NIN_1(h)
+      v = self.NIN_2(h)
+    w = torch.einsum('b i d, b j d -> b i j', q, k) * (int(C) ** (-0.5))
     w = F.softmax(w, dim=-1)
-    w = torch.reshape(w, (B, H, W, H, W))
-    h = torch.einsum('bhwij,bcij->bchw', w, v)
+    h = torch.einsum('b i j, b j d -> b i d', w, v)
     h = self.NIN_3(h)
+    h = h.reshape(B, H, W, C).permute(0, 3, 1, 2).contiguous()
     if not self.skip_rescale:
       return x + h
     else:
       return (x + h) / np.sqrt(2.)
-
 
 class Upsample(nn.Module):
   def __init__(self, in_ch=None, out_ch=None, with_conv=False, fir=False,

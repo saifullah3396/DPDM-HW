@@ -16,6 +16,7 @@ model:
   ema_rate: .999
   use_ema: True
   network:
+    nf: 128
     image_size: 32
     num_in_channels: 3
     num_out_channels: 3

@@ -12,7 +12,6 @@ try:
 except RuntimeError:
     pass
 
-
 def run_main(config):
     processes = []
     for rank in range(config.setup.n_gpus_per_node):
@@ -45,7 +44,7 @@ def setup(config, fn):
 
 
 def set_logger(gfile_stream):
-    handler = logging.StreamHandler(gfile_stream)
+    handler = logging.StreamHandler(sys.stdout)
     formatter = logging.Formatter(
         '%(levelname)s - %(filename)s - %(asctime)s - %(message)s')
     handler.setFormatter(formatter)

@@ -8,6 +8,8 @@ import PIL
 from torchvision.utils import make_grid
 from scipy import linalg
 from pathlib import Path
+from diffusers import AutoencoderKL
+import tqdm
 
 from dataset_tool import is_image_ext
 
@@ -31,7 +33,8 @@ def make_dir(dir):
     if not os.path.exists(dir):
         os.makedirs(dir)
     else:
-        raise ValueError('Directory already exists.')
+        pass
+        # raise ValueError('Directory already exists.')
 
 
 def add_dimensions(x, n_additional_dims):
@@ -42,10 +45,12 @@ def add_dimensions(x, n_additional_dims):
 
 
 def save_checkpoint(ckpt_path, state):
-    saved_state = {'model': state['model'].state_dict(),
-                   'ema': state['ema'].state_dict(),
-                   'optimizer': state['optimizer'].state_dict(),
-                   'step': state['step']}
+    saved_state = {
+        "model": state["model"].state_dict(),
+        "ema": state["ema"].state_dict(),
+        "optimizer": state["optimizer"].state_dict(),
+        "step": state["step"],
+    }
     torch.save(saved_state, ckpt_path)
 
 
@@ -55,24 +60,27 @@ def save_img(x, filename, figsize=None):
     nrow = int(np.sqrt(x.shape[0]))
     image_grid = make_grid(x, nrow)
     plt.figure(figsize=figsize)
-    plt.axis('off')
+    plt.axis("off")
     plt.imshow(image_grid.permute(1, 2, 0).cpu())
-    plt.savefig(filename, pad_inches=0., bbox_inches='tight')
+    plt.savefig(filename, pad_inches=0.0, bbox_inches="tight")
     plt.close()
 
 
-def sample_random_image_batch(sampling_shape, sampler, path, device, n_classes=None, name='sample'):
+def sample_random_image_batch(
+    sampling_shape, sampler, path, device, n_classes=None, name="sample"
+):
     make_dir(path)
 
     x = torch.randn(sampling_shape, device=device)
     if n_classes is not None:
-        y = torch.randint(n_classes, size=(
-            sampling_shape[0],), dtype=torch.int32, device=device)
+        y = torch.randint(
+            n_classes, size=(sampling_shape[0],), dtype=torch.int32, device=device
+        )
 
     x = sampler(x, y)
-    x = x / 2. + .5
+    x = x / 2.0 + 0.5
 
-    save_img(x, os.path.join(path, name + '.png'))
+    save_img(x, os.path.join(path, name + ".png"))
     np.save(os.path.join(path, name), x.cpu())
 
 
@@ -83,29 +91,59 @@ def calculate_frechet_distance(mu1, sigma1, mu2, sigma2):
     return fd
 
 
-def compute_fid(n_samples, n_gpus, sampling_shape, sampler, inception_model, stats_paths, device, n_classes=None):
+def compute_fid(
+    n_samples,
+    n_gpus,
+    sampling_shape,
+    sampler,
+    inception_model,
+    stats_paths,
+    device,
+    n_classes=None,
+    vae=None,
+    scale_factor=0.18215,
+    dataset=None,
+):
     num_samples_per_gpu = int(np.ceil(n_samples / n_gpus))
+    if vae is not None:
+        vae.cuda()
 
-    def generator(num_samples):
-        num_sampling_rounds = int(
-            np.ceil(num_samples / sampling_shape[0]))
+    def generator(dataset, num_samples):
+        num_sampling_rounds = int(np.ceil(num_samples / sampling_shape[0]))
         for _ in range(num_sampling_rounds):
             x = torch.randn(sampling_shape, device=device)
+            # randomly generate a caption from the dataset
+            captions = []
+            for _ in range(x.shape[0]):
+                dataset_idx = np.random.randint(len(dataset))
+                _, _, caption = dataset[dataset_idx]
+                captions.append(caption)
+            captions = torch.cat(captions, dim=0)
+            captions = captions.to(device)
 
             if n_classes is not None:
-                y = torch.randint(n_classes, size=(
-                    sampling_shape[0],), dtype=torch.int32, device=device)
-                x = sampler(x, y=y)
+                y = torch.randint(
+                    n_classes,
+                    size=(sampling_shape[0],),
+                    dtype=torch.int32,
+                    device=device,
+                )
+                x = sampler(x, y=y, context=captions)
 
             else:
                 x = sampler(x)
+            x = vae.decode(x / scale_factor).sample
 
-            x = (x / 2. + .5).clip(0., 1.)
-            x = (x * 255.).to(torch.uint8)
+            x = (x / 2.0 + 0.5).clip(0.0, 1.0)
+            x = (x * 255.0).to(torch.uint8)
             yield x
 
-    act = get_activations(generator(num_samples_per_gpu),
-                          inception_model, device=device, max_samples=n_samples)
+    act = get_activations(
+        generator(dataset, num_samples_per_gpu),
+        inception_model,
+        device=device,
+        max_samples=n_samples,
+    )
     mu = np.mean(act, axis=0)
     sigma = np.cov(act, rowvar=False)
     m = torch.from_numpy(mu).cuda()
@@ -113,16 +151,21 @@ def compute_fid(n_samples, n_gpus, sampling_shape, sampler, inception_model, sta
     average_tensor(m)
     average_tensor(s)
 
+    if vae is not None:
+        vae.to("cpu")
     all_pool_mean = m.cpu().numpy()
     all_pool_sigma = s.cpu().numpy()
 
     fid = []
     for stats_path in stats_paths:
         stats = np.load(stats_path)
-        data_pools_mean = stats['mu']
-        data_pools_sigma = stats['sigma']
-        fid.append(calculate_frechet_distance(data_pools_mean,
-                   data_pools_sigma, all_pool_mean, all_pool_sigma))
+        data_pools_mean = stats["mu"]
+        data_pools_sigma = stats["sigma"]
+        fid.append(
+            calculate_frechet_distance(
+                data_pools_mean, data_pools_sigma, all_pool_mean, all_pool_sigma
+            )
+        )
     return fid
 
 
@@ -131,11 +174,15 @@ class FolderDataset(torch.utils.data.Dataset):
         super().__init__()
 
         self.path = path
-        self.img = [str(f) for f in sorted(Path(path).rglob('*'))
-                    if is_image_ext(f) and os.path.isfile(f)]
-        all_labels_path = os.path.join(path, 'all_labels.pt')
-        self.label = torch.load(all_labels_path) if os.path.exists(
-            all_labels_path) else None
+        self.img = [
+            str(f)
+            for f in sorted(Path(path).rglob("*"))
+            if is_image_ext(f) and os.path.isfile(f)
+        ]
+        all_labels_path = os.path.join(path, "all_labels.pt")
+        self.label = (
+            torch.load(all_labels_path) if os.path.exists(all_labels_path) else None
+        )
         self.transform = transform
 
     def __getitem__(self, idx):
@@ -161,8 +208,8 @@ def get_activations(dl, model, device, max_samples):
     pred_arr = []
     total_processed = 0
 
-    print('Starting to sample.')
-    for batch in dl:
+    print("Starting to sample.")
+    for batch in tqdm.tqdm(dl):
         # ignore labels
         if isinstance(batch, list):
             batch = batch[0]
@@ -172,16 +219,18 @@ def get_activations(dl, model, device, max_samples):
             batch = batch.repeat(1, 3, 1, 1)
         elif len(batch.shape) == 3:  # if image is gray scale
             batch = batch.unsqueeze(1).repeat(1, 3, 1, 1)
-
         with torch.no_grad():
-            pred = model(batch.to(device),
-                         return_features=True).unsqueeze(-1).unsqueeze(-1)
+            pred = (
+                model(batch.to(device), return_features=True)
+                .unsqueeze(-1)
+                .unsqueeze(-1)
+            )
 
         pred = pred.squeeze(3).squeeze(2).cpu().numpy()
         pred_arr.append(pred)
         total_processed += pred.shape[0]
         if max_samples is not None and total_processed > max_samples:
-            print('Max of %d samples reached.' % max_samples)
+            print("Max of %d samples reached." % max_samples)
             break
 
     pred_arr = np.concatenate(pred_arr, axis=0)

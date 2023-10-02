@@ -11,7 +11,7 @@ from utils.util import set_seeds, make_dir
 from denoiser import EDMDenoiser, VPSDEDenoiser, VESDEDenoiser, VDenoiser
 from samplers import ddim_sampler, edm_sampler
 from model.ncsnpp import NCSNpp
-
+from diffusers import AutoencoderKL
 
 def get_model(config, local_rank):
     if config.model.denoiser_name == 'edm':
@@ -54,7 +54,7 @@ def get_model(config, local_rank):
     return model
 
 
-def sample_batch(sample_dir, counter, max_samples, sampling_fn, sampling_shape, device, labels, n_classes):
+def sample_batch(sample_dir, counter, max_samples, sampling_fn, sampling_shape, device, labels, n_classes, vae):
     x = torch.randn(sampling_shape, device=device)
     with torch.no_grad():
         if labels is None:
@@ -76,6 +76,9 @@ def sample_batch(sample_dir, counter, max_samples, sampling_fn, sampling_shape, 
 
             x = sampling_fn(x, labels)
 
+        # decode from vae
+        x = vae.decode(x / 0.18215).sample
+        
         x = (x / 2. + .5).clip(0., 1.)
         x = x.cpu().permute(0, 2, 3, 1) * 255.
         x = x.numpy().astype(np.uint8)
@@ -106,17 +109,20 @@ def evaluation(config, workdir):
     dist.barrier()
 
     model = get_model(config, config.setup.local_rank)
+    
+    vae = AutoencoderKL.from_pretrained(config.setup.vae_model).to(config.setup.local_rank)
+
 
     sampling_shape = (config.sampler.batch_size,
                       config.data.num_channels,
                       config.data.resolution,
                       config.data.resolution)
 
-    def sampler(x, y=None):
+    def sampler(x, y=None, context=None):
         if config.sampler.type == 'ddim':
-            return ddim_sampler(x, y, model, **config.sampler)
+            return ddim_sampler(x, y, context=None, model, **config.sampler)
         elif config.sampler.type == 'edm':
-            return edm_sampler(x, y, model, **config.sampler)
+            return edm_sampler(x, y, context=None, model, **config.sampler)
         else:
             raise NotImplementedError
 
@@ -126,7 +132,7 @@ def evaluation(config, workdir):
     all_labels = []
     for _ in range(config.test.n_samples // (sampling_shape[0] * config.setup.global_size) + 1):
         counter, labels = sample_batch(sample_dir, counter, config.test.n_samples, sampler,
-                                       sampling_shape, config.setup.device, config.sampler.labels, config.data.n_classes)
+                                       sampling_shape, config.setup.device, config.sampler.labels, config.data.n_classes, vae=vae)
         all_labels.append(labels)
 
     if config.sampler.labels is not None:
