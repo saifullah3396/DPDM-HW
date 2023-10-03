@@ -115,8 +115,8 @@ def evaluation(config, workdir):
 
     sampling_shape = (config.sampler.batch_size,
                       config.data.num_channels,
-                      config.data.resolution,
-                      config.data.resolution)
+                      config.data.resolution_h,
+                      config.data.resolution_w)
 
     def sampler(x, y=None, context=None):
         if config.sampler.type == 'ddim':

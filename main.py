@@ -30,9 +30,9 @@ def run_main(config):
 
 
 def setup(config, fn):
-    os.environ['MASTER_ADDR'] = config.setup.master_address
-    os.environ['MASTER_PORT'] = '%d' % config.setup.master_port
-    os.environ['OMP_NUM_THREADS'] = '%d' % config.setup.omp_n_threads
+    # os.environ['MASTER_ADDR'] = config.setup.master_address
+    # os.environ['MASTER_PORT'] = '%d' % config.setup.master_port
+    # os.environ['OMP_NUM_THREADS'] = '%d' % config.setup.omp_n_threads
     torch.cuda.set_device(config.setup.local_rank)
     dist.init_process_group(backend='nccl',
                             init_method='env://',

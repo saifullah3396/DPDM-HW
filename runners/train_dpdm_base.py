@@ -1,5 +1,6 @@
 import importlib
 import logging
+import math
 import os
 from pathlib import Path
 import pickle
@@ -106,9 +107,14 @@ def training(config, workdir, mode):
     tokenizer.pad_token = "<pad>"
     tokenizer.unk_token = "<unk>"
 
+    try:
+        sigma_data = config.setup.sigma_data
+    except:
+        sigma_data = math.sqrt(1.0 / 3)
+        
     if config.model.denoiser_name == "edm":
         if config.model.denoiser_network == "song":
-            model = EDMDenoiser(NCSNpp(**config.model.network, pad_token_id=tokenizer.pad_token_id, vocab_size=tokenizer.vocab_size).to(config.setup.device))
+            model = EDMDenoiser(NCSNpp(**config.model.network, pad_token_id=tokenizer.pad_token_id, vocab_size=tokenizer.vocab_size).to(config.setup.device), sigma_data=sigma_data)
         else:
             raise NotImplementedError
     elif config.model.denoiser_name == "vpsde":
@@ -138,6 +144,11 @@ def training(config, workdir, mode):
 
     model = DPDDP(model)
     ema = ExponentialMovingAverage(model.parameters(), decay=config.model.ema_rate)
+    checkpoint_path = Path(checkpoint_dir) / 'snapshot_checkpoint.pth'
+    if checkpoint_path.exists():
+        checkpoint = torch.load(checkpoint_path)
+        model.load_state_dict(checkpoint['model'])
+        ema.load_state_dict(checkpoint['ema'])
 
     if config.optim.optimizer == "Adam":
         optimizer = torch.optim.Adam(model.parameters(), **config.optim.params)
@@ -157,9 +168,7 @@ def training(config, workdir, mode):
     if config.data.name == "iam_dataset":
         dataset = FeaturesIAMDataset(config.data.path, tokenizer=tokenizer)
     else:
-        dataset = ImageFolderDataset(
-            config.data.path, config.data.resolution, **config.data.dataset_params
-        )
+        raise NotImplementedError()
     dataset_loader = torch.utils.data.DataLoader(
         dataset=dataset, shuffle=True, batch_size=config.train.batch_size
     )
@@ -183,9 +192,9 @@ def training(config, workdir, mode):
         subfolder='vae'
     )
     vae.eval()
-
+    print("sigma_data", sigma_data)
     if config.loss.version == "edm":
-        loss_fn = EDMLoss(**config.loss).get_loss
+        loss_fn = EDMLoss(**config.loss, sigma_data=config.setup.sigma_data).get_loss
     elif config.loss.version == "vpsde":
         loss_fn = VPSDELoss(**config.loss).get_loss
     elif config.loss.version == "vesde":
@@ -211,14 +220,14 @@ def training(config, workdir, mode):
     snapshot_sampling_shape = (
         config.sampler.snapshot_batch_size,
         config.data.num_channels,
-        config.data.resolution,
-        config.data.resolution,
+        config.data.resolution_h,
+        config.data.resolution_w,
     )
     fid_sampling_shape = (
         config.sampler.fid_batch_size,
         config.data.num_channels,
-        config.data.resolution,
-        config.data.resolution,
+        config.data.resolution_h,
+        config.data.resolution_w,
     )
     for epoch in range(config.train.n_epochs):
         with BatchMemoryManager(
@@ -250,6 +259,8 @@ def training(config, workdir, mode):
                             os.path.join(sample_dir, "iter_%d" % state["step"]),
                             config.setup.device,
                             config.data.n_classes,
+                            vae=vae,
+                            dataset=dataset,
                         )
                         ema.restore(model.parameters())
                     model.train()

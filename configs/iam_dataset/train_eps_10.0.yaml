@@ -3,20 +3,18 @@ setup:
   n_gpus_per_node: 1
   n_nodes: 1
   node_rank: 0
-  master_address: '127.0.0.1'
-  master_port: 60220
-  omp_n_threads: 64
   vae_model: 'CompVis/stable-diffusion-v1-4'
+  sigma_data: 1
 data:
-  path: /media/saifullah/drive/work/ds/documents/iam_dataset/features/compvis_stable-diffusion-v1-4-64x256/train_features.msgpack
+  path: /ds-sds/documents/iam_dataset/features/compvis_stable-diffusion-v1-4-64x256/train_features.msgpack
   split: train
-  vocab_path: /media/saifullah/drive/work/ds/documents/iam_dataset/tokenizer_vocab/
+  vocab_path: /ds-sds/documents/iam_dataset/tokenizer_vocab/
   name: iam_dataset
   num_channels: 4
-  resolution: 32
+  resolution_h: 8
+  resolution_w: 32
   n_classes: 672
   one_hot: False
-  max_samples_percent: 10
   fid_stats: 
   - fid_stats/iam_dataset/train.npz
   dataloader_params:
@@ -53,7 +51,7 @@ sampler:
 train:
   seed: 0
   batch_size: 4096
-  n_epochs: 100
+  n_epochs: 300
   log_freq: 1
   snapshot_freq: 1000
   snapshot_threshold: 1
@@ -72,5 +70,5 @@ dp:
   max_grad_norm: 1.
   delta: 8.671673112610347e-06
   epsilon: 10.0
-  max_physical_batch_size: 32
+  max_physical_batch_size: 256
   n_splits: 0

@@ -566,8 +566,8 @@ class NIN(nn.Module):
         y = contract_inner(x, self.W) + self.b
         return y.permute(0, 3, 1, 2)
     
-# import importlib
-# opacus = importlib.import_module('src.opacus')
+import importlib
+opacus = importlib.import_module('src.opacus')
 
 from opacus.grad_sample import register_grad_sampler
 @register_grad_sampler(NIN)

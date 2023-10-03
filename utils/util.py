@@ -67,18 +67,32 @@ def save_img(x, filename, figsize=None):
 
 
 def sample_random_image_batch(
-    sampling_shape, sampler, path, device, n_classes=None, name="sample"
+    sampling_shape, sampler, path, device, n_classes=None, name="sample",
+    vae=None,
+    scale_factor=0.18215,
+    dataset=None,
 ):
     make_dir(path)
-
+    vae.cuda()
     x = torch.randn(sampling_shape, device=device)
+    captions = []
+    for _ in range(x.shape[0]):
+        dataset_idx = np.random.randint(len(dataset))
+        _, _, caption = dataset[dataset_idx]
+        captions.append(caption)
+    captions = torch.cat(captions, dim=0)
+    captions = captions.to(device)
     if n_classes is not None:
         y = torch.randint(
             n_classes, size=(sampling_shape[0],), dtype=torch.int32, device=device
         )
 
-    x = sampler(x, y)
-    x = x / 2.0 + 0.5
+    x = sampler(x, y, context=captions)
+    x = vae.decode(x / scale_factor).sample
+
+    x = (x / 2.0 + 0.5).clip(0.0, 1.0)
+    x = (x * 255.0).to(torch.uint8)
+    vae.to('cpu')
 
     save_img(x, os.path.join(path, name + ".png"))
     np.save(os.path.join(path, name), x.cpu())
