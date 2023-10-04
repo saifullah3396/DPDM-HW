@@ -1,0 +1,1 @@
+python main.py --mode train --workdir /netscratch/saifullah/DPDM-HW-IAM-BASE/$1 --config ./configs/iam_dataset_base/train_eps_10.0_K=8.yaml

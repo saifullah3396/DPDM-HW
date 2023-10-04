@@ -15,7 +15,7 @@ from opacus.distributed import DifferentiallyPrivateDistributedDataParallel as D
 from opacus.utils.batch_memory_manager import BatchMemoryManager
 from torch.utils.data import Dataset
 from transformers import GPT2Tokenizer
-
+from PIL import Image
 from denoiser import EDMDenoiser, VDenoiser, VESDEDenoiser, VPSDEDenoiser
 from dnnlib.util import open_url
 from model.ema import ExponentialMovingAverage
@@ -23,6 +23,7 @@ from model.ncsnpp import NCSNpp
 from samplers import ddim_sampler, edm_sampler
 from score_losses import EDMLoss, VESDELoss, VLoss, VPSDELoss
 from stylegan3.dataset import ImageFolderDataset
+import io 
 from utils.util import (
     compute_fid,
     make_dir,
@@ -48,6 +49,42 @@ class TorchMsgpackFeatures(Dataset):
         return int(self.max_samples_percent / 100 * len(self.dataset))
 
 
+class BaseIAMDataset(Dataset):
+    def __init__(self, data_path, tokenizer, split="train", seed=42):
+        self.dataset = MsgpackReader(data_path)
+        self.tokenizer = tokenizer
+        base_path = Path("dataset_splits/iam_dataset/")
+        if not (base_path / f"{split}.npy").exists():
+            base_path.mkdir(parents=True, exist_ok=True)
+
+            indices = np.arange(len(self.dataset))
+            np.random.seed(seed)
+            np.random.shuffle(indices)
+            train, test = (
+                indices[: int(0.9 * (len(self.dataset)))],
+                indices[int(0.9 * (len(self.dataset))) :],
+            )
+            np.save(base_path / f"train.npy", train)
+            np.save(base_path / f"test.npy", test)
+        self.split_indices = np.load(base_path / f"{split}.npy")
+
+    def __getitem__(self, index):
+        sample = self.dataset[self.split_indices[index]]
+        sample['image'] = Image.open(io.BytesIO(sample["image"]["bytes"])).convert("L")
+        sample['image'] = torch.from_numpy(np.array(sample['image'])) / 255.
+        sample["caption"] = self.tokenizer(
+            sample["caption"],
+            max_length=50,
+            padding="max_length",
+            truncation=True,
+            return_tensors="pt",
+        ).input_ids
+        sample["image"] = sample["image"] * 2 - 1
+        sample["image"] = sample["image"].unsqueeze(0)
+        return sample["image"], sample["label"], sample["caption"]
+
+    def __len__(self):
+        return len(self.split_indices)
 
 class FeaturesIAMDataset(Dataset):
     def __init__(self, data_path, tokenizer, split="train", seed=42):
@@ -146,6 +183,7 @@ def training(config, workdir, mode):
     ema = ExponentialMovingAverage(model.parameters(), decay=config.model.ema_rate)
     checkpoint_path = Path(checkpoint_dir) / 'snapshot_checkpoint.pth'
     if checkpoint_path.exists():
+        print("Loading checkpoint")
         checkpoint = torch.load(checkpoint_path)
         model.load_state_dict(checkpoint['model'])
         ema.load_state_dict(checkpoint['ema'])
@@ -164,9 +202,11 @@ def training(config, workdir, mode):
         logging.info("Number of total epochs: %d" % config.train.n_epochs)
         logging.info("Starting training at step %d" % state["step"])
     dist.barrier()
-
+    
     if config.data.name == "iam_dataset":
         dataset = FeaturesIAMDataset(config.data.path, tokenizer=tokenizer)
+    elif config.data.name == "iam_dataset_base":
+        dataset = BaseIAMDataset(config.data.path, tokenizer=tokenizer)
     else:
         raise NotImplementedError()
     dataset_loader = torch.utils.data.DataLoader(
@@ -185,16 +225,18 @@ def training(config, workdir, mode):
         max_grad_norm=config.dp.max_grad_norm,
         noise_multiplicity=config.loss.n_noise_samples,
     )
-
-    vae = AutoencoderKL.from_pretrained(
-        config.setup.vae_model,
-        cache_dir=cache_dir,
-        subfolder='vae'
-    )
-    vae.eval()
-    print("sigma_data", sigma_data)
+    
+    if config.setup.use_vae:
+        vae = AutoencoderKL.from_pretrained(
+            config.setup.vae_model,
+            cache_dir=cache_dir,
+            subfolder='vae'
+        )
+        vae.eval()
+    else:
+        vae = None
     if config.loss.version == "edm":
-        loss_fn = EDMLoss(**config.loss, sigma_data=config.setup.sigma_data).get_loss
+        loss_fn = EDMLoss(**config.loss, sigma_data=sigma_data).get_loss
     elif config.loss.version == "vpsde":
         loss_fn = VPSDELoss(**config.loss).get_loss
     elif config.loss.version == "vesde":
@@ -324,9 +366,8 @@ def training(config, workdir, mode):
                     y = train_y.to(config.setup.device)
                     if y.dtype == torch.float32:
                         y = y.long()
-
                 optimizer.zero_grad(set_to_none=True)
-                loss = torch.mean(loss_fn(model, x, y, context))
+                loss = torch.mean(loss_fn(model, x, y, context, set_w=config.setup.set_w))
                 loss.backward()
                 optimizer.step()
 

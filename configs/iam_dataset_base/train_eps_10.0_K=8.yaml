@@ -4,15 +4,16 @@ setup:
   n_nodes: 1
   node_rank: 0
   vae_model: 'CompVis/stable-diffusion-v1-4'
-  sigma_data: 1
+  use_vae: False
+  set_w: True
 data:
-  path: /ds-sds/documents/iam_dataset/features/compvis_stable-diffusion-v1-4-64x256/train_features.msgpack
+  path: /ds-sds/documents/iam_dataset/huggingface/iam_dataset/default-64x256/1.0.0/iam_dataset-train.msgpack
   split: train
   vocab_path: /ds-sds/documents/iam_dataset/tokenizer_vocab/
-  name: iam_dataset
-  num_channels: 4
-  resolution_h: 8
-  resolution_w: 32
+  name: iam_dataset_base
+  num_channels: 1
+  resolution_h: 64
+  resolution_w: 256
   n_classes: 672
   one_hot: False
   fid_stats: 
@@ -25,9 +26,9 @@ model:
   denoiser_network: song
   ema_rate: .999
   network:
-    image_size: 32
-    num_in_channels: 4
-    num_out_channels: 4
+    image_size: 256
+    num_in_channels: 1
+    num_out_channels: 1
     label_dim: 672
     attn_resolutions:
     - 8
@@ -52,23 +53,29 @@ train:
   seed: 0
   batch_size: 4096
   n_epochs: 300
-  log_freq: 1
+  log_freq: 100
   snapshot_freq: 1000
   snapshot_threshold: 1
   save_freq: 1000
   save_threshold: 1
-  fid_freq: 10000
+  fid_freq: 30000
   fid_samples: 5000
   fid_threshold: 1
 loss: 
-  version: edm
-  p_mean: -1.2
-  p_std: 1.2
+  version: v
+  logsnr_min: -9.
+  logsnr_max: 13.
   n_noise_samples: 8
   n_classes: 672
+# loss: 
+#   version: edm
+#   p_mean: -1.2
+#   p_std: 1.2
+#   n_noise_samples: 8
+#   n_classes: 672
 dp:
   max_grad_norm: 1.
   delta: 8.671673112610347e-06
   epsilon: 10.0
-  max_physical_batch_size: 256
+  max_physical_batch_size: 16
   n_splits: 0

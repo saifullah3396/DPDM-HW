@@ -73,7 +73,8 @@ def sample_random_image_batch(
     dataset=None,
 ):
     make_dir(path)
-    vae.cuda()
+    if vae is not None:
+        vae.cuda()
     x = torch.randn(sampling_shape, device=device)
     captions = []
     for _ in range(x.shape[0]):
@@ -88,11 +89,13 @@ def sample_random_image_batch(
         )
 
     x = sampler(x, y, context=captions)
-    x = vae.decode(x / scale_factor).sample
+    if vae is not None:
+        x = vae.decode(x / scale_factor).sample
 
     x = (x / 2.0 + 0.5).clip(0.0, 1.0)
     x = (x * 255.0).to(torch.uint8)
-    vae.to('cpu')
+    if vae is not None:
+        vae.to('cpu')
 
     save_img(x, os.path.join(path, name + ".png"))
     np.save(os.path.join(path, name), x.cpu())
@@ -146,7 +149,8 @@ def compute_fid(
 
             else:
                 x = sampler(x)
-            x = vae.decode(x / scale_factor).sample
+            if vae is not None:
+                x = vae.decode(x / scale_factor).sample
 
             x = (x / 2.0 + 0.5).clip(0.0, 1.0)
             x = (x * 255.0).to(torch.uint8)

@@ -106,6 +106,7 @@ class AttnBlockpp(nn.Module):
     else:
       k = self.NIN_1(h)
       v = self.NIN_2(h)
+    
     w = torch.einsum('b i d, b j d -> b i j', q, k) * (int(C) ** (-0.5))
     w = F.softmax(w, dim=-1)
     h = torch.einsum('b i j, b j d -> b i d', w, v)

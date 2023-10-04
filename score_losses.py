@@ -49,7 +49,7 @@ class VPSDELoss:
     def _sigma(self, t):
         return ((0.5 * self.beta_d * t**2.0 + self.beta_min * t).exp() - 1.0).sqrt()
 
-    def get_loss(self, model, x, y, context=None):
+    def get_loss(self, model, x, y, context=None, set_w=True):
         y = dropout_label_for_cfg_training(
             y,
             self.n_noise_samples,
@@ -65,12 +65,16 @@ class VPSDELoss:
 
         sigma = add_dimensions(sigma, len(x.shape) - 1)
         x_repeated = x.unsqueeze(1).repeat_interleave(self.n_noise_samples, dim=1)
+        context_repeated = context.unsqueeze(1).repeat_interleave(self.n_noise_samples, dim=1)
         x_noisy = x_repeated + sigma * torch.randn_like(x_repeated, device=x.device)
 
-        w = 1.0 / sigma**2.0
+        if set_w:
+            w = 1.0 / sigma**2.0
+        else:
+            w = 1
 
         pred = model(
-            x_noisy.reshape(-1, *x.shape[1:]), sigma.reshape(-1, *sigma.shape[2:]), y, context=context
+            x_noisy.reshape(-1, *x.shape[1:]), sigma.reshape(-1, *sigma.shape[2:]), y, context=context_repeated.reshape(-1, *context.shape[1:]),
         ).reshape(x.shape[0], self.n_noise_samples, *x.shape[1:])
         loss = w * (pred - x_repeated) ** 2.0
         loss = torch.mean(loss.reshape(loss.shape[0], -1), dim=-1)
@@ -93,7 +97,7 @@ class VESDELoss:
         self.label_unconditioning_prob = label_unconditioning_prob
         self.n_classes = n_classes
 
-    def get_loss(self, model, x, y, context=None):
+    def get_loss(self, model, x, y, context=None, set_w=True):
         y = dropout_label_for_cfg_training(
             y,
             self.n_noise_samples,
@@ -109,12 +113,16 @@ class VESDELoss:
 
         sigma = add_dimensions(sigma, len(x.shape) - 1)
         x_repeated = x.unsqueeze(1).repeat_interleave(self.n_noise_samples, dim=1)
+        context_repeated = context.unsqueeze(1).repeat_interleave(self.n_noise_samples, dim=1)
         x_noisy = x_repeated + sigma * torch.randn_like(x_repeated, device=x.device)
 
-        w = 1.0 / sigma**2.0
+        if set_w:
+            w = 1.0 / sigma**2.0
+        else:
+            w = 1.0
 
         pred = model(
-            x_noisy.reshape(-1, *x.shape[1:]), sigma.reshape(-1, *sigma.shape[2:]), y, context=context
+            x_noisy.reshape(-1, *x.shape[1:]), sigma.reshape(-1, *sigma.shape[2:]), y, context=context_repeated.reshape(-1, *context.shape[1:]),
         ).reshape(x.shape[0], self.n_noise_samples, *x.shape[1:])
         loss = w * (pred - x_repeated) ** 2.0
         loss = torch.mean(loss.reshape(loss.shape[0], -1), dim=-1)
@@ -145,7 +153,7 @@ class VLoss:
     def _sigma(self, t):
         return (torch.cos(np.pi * t / 2.0) ** (-2.0) - 1.0).sqrt()
 
-    def get_loss(self, model, x, y, context=None):
+    def get_loss(self, model, x, y, context=None, set_w=True):
         y = dropout_label_for_cfg_training(
             y,
             self.n_noise_samples,
@@ -161,12 +169,16 @@ class VLoss:
 
         sigma = add_dimensions(sigma, len(x.shape) - 1)
         x_repeated = x.unsqueeze(1).repeat_interleave(self.n_noise_samples, dim=1)
+        context_repeated = context.unsqueeze(1).repeat_interleave(self.n_noise_samples, dim=1)
         x_noisy = x_repeated + sigma * torch.randn_like(x_repeated, device=x.device)
 
-        w = (sigma**2.0 + 1.0) / sigma**2.0
+        if set_w:
+            w = (sigma**2.0 + 1.0) / sigma**2.0
+        else:
+            w = 1
 
         pred = model(
-            x_noisy.reshape(-1, *x.shape[1:]), sigma.reshape(-1, *sigma.shape[2:]), y, context=context
+            x_noisy.reshape(-1, *x.shape[1:]), sigma.reshape(-1, *sigma.shape[2:]), y, context=context_repeated.reshape(-1, *context.shape[1:]),
         ).reshape(x.shape[0], self.n_noise_samples, *x.shape[1:])
         loss = w * (pred - x_repeated) ** 2.0
         loss = torch.mean(loss.reshape(loss.shape[0], -1), dim=-1)
@@ -191,7 +203,7 @@ class EDMLoss:
         self.label_unconditioning_prob = label_unconditioning_prob
         self.n_classes = n_classes
 
-    def get_loss(self, model, x, y, context=None):
+    def get_loss(self, model, x, y, context=None, set_w=True):
         y = dropout_label_for_cfg_training(
             y,
             self.n_noise_samples,
@@ -211,7 +223,10 @@ class EDMLoss:
         context_repeated = context.unsqueeze(1).repeat_interleave(self.n_noise_samples, dim=1)
         x_noisy = x_repeated + sigma * torch.randn_like(x_repeated, device=x.device)
 
-        w = (sigma**2.0 + self.sigma_data**2.0) / (sigma * self.sigma_data) ** 2.0
+        if set_w:
+            w = (sigma**2.0 + self.sigma_data**2.0) / (sigma * self.sigma_data) ** 2.0
+        else:
+            w = 1
         pred = model(
             x_noisy.reshape(-1, *x.shape[1:]),
             sigma.reshape(-1, *sigma.shape[2:]),
