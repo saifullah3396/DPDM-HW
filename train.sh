@@ -1,1 +1,1 @@
-python main.py --mode train --workdir /netscratch/saifullah/DPDM-HW-sigma-1/$1 --config ./configs/iam_dataset/train_eps_10.0_K=8.yaml
+python main.py --mode train --workdir /netscratch/saifullah/DPDM-HW-sigma-1/$1 --config ./configs/iam_dataset/train_eps_10.0_K=8.yaml 
